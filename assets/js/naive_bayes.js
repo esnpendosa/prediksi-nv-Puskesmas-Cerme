@@ -33,11 +33,19 @@ document.addEventListener('DOMContentLoaded', function () {
                 const resPasien = await fetch(`../api/api_data.php?action=get_pasien_belum&id_atribut=${idAtribut}`);
                 currentPasienData = await resPasien.json();
 
-                // Fetch keseluruhan data latih Naive Bayes
-                const resTraining = await fetch(`../api/api_data.php?action=get_training_data`);
-                const trainingData = await resTraining.json();
+                // Call the unified Python API to get the exact correct predictions
+                const response = await fetch('../api/predict_python.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id_atribut: idAtribut })
+                });
+                const apiRes = await response.json();
+                
+                if (!apiRes.success) {
+                    throw new Error(apiRes.message || "Gagal menghitung prediksi.");
+                }
 
-                await hitungNaiveBayes(currentPasienData, trainingData);
+                await renderNaiveBayesResult(apiRes.result, currentPasienData);
 
                 placeholderPrediksi.classList.remove('d-flex');
                 placeholderPrediksi.style.display = 'none';
@@ -52,7 +60,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 Swal.fire({
                     icon: 'error',
                     title: 'Koneksi Server Gagal',
-                    text: "Error saat mengambil dataset: " + err,
+                    text: "Error saat mengambil dataset: " + err.message,
                     confirmButtonColor: '#0072FF'
                 });
             } finally {
@@ -123,40 +131,35 @@ document.addEventListener('DOMContentLoaded', function () {
         return node;
     };
 
-    // Fungsi Matematika Naive Bayes
-    async function hitungNaiveBayes(dataUji, dataLatih) {
+    // Fungsi Render Hasil Komputasi dari Python Backend
+    async function renderNaiveBayesResult(apiResult, dataUji) {
         logikaNB.innerHTML = '';
-        const totalData = dataLatih.length;
+        
+        const priorStep = apiResult.details.find(d => d.step === "Prior");
+        const catStep = apiResult.details.find(d => d.step === "Likelihood Kategorikal");
+        const numStep = apiResult.details.find(d => d.step === "Likelihood Numerik");
 
-        if (totalData === 0) {
-            logikaNB.innerHTML = `<div class="alert alert-danger m-3 border-0 shadow-sm"><i class="fas fa-exclamation-triangle me-2"></i><strong>Dataset Kosong!</strong> Sistem tidak memiliki data riwayat untuk dipelajari.</div>`;
-            return;
-        }
-
-        // Tampilkan Jenis Kelamin secara eksplisit
         const jenisKelaminLengkap = dataUji.jenis_kelamin === 'laki-laki' ? 'Laki-laki' : 'Perempuan';
 
         // --- FASE 1: Identifikasi ---
-        const f1 = appendLog(`<div class="ai-log-section p-3 mb-3 bg-white rounded-3 shadow-sm border">
+        const f1 = appendLog(`<div class="ai-log-section p-3 mb-3 bg-white rounded-3 shadow-sm border animate-slide-up">
             <h6 class="fw-bold text-primary mb-3"><i class="fas fa-search me-2"></i>Tahap 1: Ekstraksi Fitur Klinis Pasien</h6>
             <div class="row g-2 small text-dark">
                 <div class="col-sm-6"><span class="text-muted">Nama/NIK:</span> <strong>${dataUji.nama} (${dataUji.nik})</strong></div>
-                <div class="col-sm-6"><span class="text-muted">Umur / L/P:</span> <strong>${dataUji.umur} Tahun / ${jenisKelaminLengkap}</strong></div>
-                <div class="col-sm-6"><span class="text-muted">Tensi (Sys/Dia):</span> <strong class="text-danger">${dataUji.tekanan_sistolik}/${dataUji.tekanan_diastolik} mmHg</strong></div>
-                <div class="col-sm-6"><span class="text-muted">IMT (Fisik):</span> <strong>${dataUji.imt}</strong></div>
+                <div class="col-sm-6"><span class="text-muted">Umur / L/P:</span> <strong>${apiResult.details[2].items[0].val} Tahun / ${jenisKelaminLengkap}</strong></div>
+                <div class="col-sm-6"><span class="text-muted">Tensi (Sys/Dia):</span> <strong class="text-danger">${apiResult.details[2].items[1].val}/${apiResult.details[2].items[2].val} mmHg</strong></div>
+                <div class="col-sm-6"><span class="text-muted">IMT (Fisik):</span> <strong>${apiResult.details[2].items[3].val}</strong></div>
             </div>
             <div class="progress mt-3" style="height: 4px;"><div class="progress-bar progress-bar-striped progress-bar-animated w-100"></div></div>
         </div>`);
-        await sleep(800);
+        await sleep(600);
         f1.querySelector('.progress').style.display = 'none';
 
         // --- FASE 2: Prior ---
-        const cTinggi = dataLatih.filter(d => d.hasil_prediksi === 'Tinggi').length;
-        const cRendah = dataLatih.filter(d => d.hasil_prediksi === 'Rendah').length;
-        const pTinggi = cTinggi / totalData;
-        const pRendah = cRendah / totalData;
+        const pTinggi = priorStep.data.tinggi.p;
+        const pRendah = priorStep.data.rendah.p;
 
-        appendLog(`<div class="ai-log-section p-3 mb-3 bg-white rounded-3 shadow-sm border">
+        appendLog(`<div class="ai-log-section p-3 mb-3 bg-white rounded-3 shadow-sm border animate-slide-up">
             <h6 class="fw-bold text-primary mb-3"><i class="fas fa-chart-pie me-2"></i>Tahap 2: Probabilitas Dasar (Prior Class)</h6>
             <div class="row text-center g-2">
                 <div class="col-6">
@@ -173,182 +176,84 @@ document.addEventListener('DOMContentLoaded', function () {
                 </div>
             </div>
         </div>`);
-        await sleep(800);
-
-        // --- FASE 3: Likelihood Estimation ---
-        appendLog(`<div class="ai-log-section p-3 mb-3 bg-white rounded-3 shadow-sm border" id="section-f3">
-            <h6 class="fw-bold text-primary mb-2"><i class="fas fa-microscope me-2"></i>Tahap 3: Kalkulasi Likelihood Probabilitas (P(X|C))</h6>
-            <p class="small text-muted mb-2">Menggunakan Laplace Smoothing untuk data kategorik dan Distribusi Gaussian untuk data numerik kontinu.</p>
-        </div>`);
         await sleep(600);
 
-        function countKategorik(attr, valObj, kelas) {
+        // --- FASE 3: Likelihood Estimation ---
+        appendLog(`<div class="ai-log-section p-3 mb-3 bg-white rounded-3 shadow-sm border animate-slide-up" id="section-f3">
+            <h6 class="fw-bold text-primary mb-2"><i class="fas fa-microscope me-2"></i>Tahap 3: Kalkulasi Likelihood Probabilitas (P(X|C))</h6>
+            <p class="small text-muted mb-2">Menggunakan data real dari Python Engine dengan Gaussian PDF (Numerik) & Laplace Smoothing (Kategorik).</p>
+        </div>`);
+        await sleep(400);
 
-    const subset = dataLatih.filter(
-        d => d.hasil_prediksi === kelas
-    );
-
-    const valClean = String(valObj)
-        .trim()
-        .toLowerCase();
-
-    const count = subset.filter(d =>
-        String(d[attr])
-            .trim()
-            .toLowerCase() === valClean
-    ).length;
-
-    // SAMA PERSIS SEPERTI EXCEL COUNTIFS
-    if (subset.length === 0) return 0;
-
-    return count / subset.length;
-}
-        //function countKategorik(attr, valObj, kelas) {
-          //  const subset = dataLatih.filter(d => d.hasil_prediksi === kelas);
-            //const count = subset.filter(d => d[attr] === valObj).length;
-            //const uniqueValues = new Set(dataLatih.map(d => d[attr])).size;
-            //return (count + 1) / (subset.length + uniqueValues); // Laplace Smoothing
-        //}
-
-function getMeanVar(attr, kelas) {
-
-    const subset = dataLatih.filter(function(d) {
-        return d.hasil_prediksi === kelas;
-    });
-
-    const values = subset.map(function(d) {
-        return parseFloat(d[attr]);
-    });
-
-    const mean =
-        values.reduce((a, b) => a + b, 0) / values.length;
-
-    // VARIANCE POPULATION (sama Excel STDEV.P)
-    const variance =
-        values.reduce(function(total, value) {
-            return total + Math.pow(value - mean, 2);
-        }, 0) / values.length;
-
-    const stdev = Math.sqrt(variance);
-
-    return {
-        mean: mean,
-        variance: variance,
-        stdev: stdev
-    };
-}
-
-        //function getMeanVar(attr, kelas) {
-          //  const subset = dataLatih.filter(d => d.hasil_prediksi === kelas);
-            //const values = subset.map(d => parseFloat(d[attr]));
-            //const mean = values.reduce((a, b) => a + b, 0) / values.length;
-            //const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
-            //return { mean, variance };
-        //}
-
-        function gaussianLikelihood(x, mean, variance) {
-
-    if (variance <= 0) {
-        variance = 0.000001;
-    }
-
-    const exponent =
-        Math.exp(
-            -Math.pow(x - mean, 2) /
-            (2 * variance)
-        );
-
-    return (
-        1 /
-        Math.sqrt(2 * Math.PI * variance)
-    ) * exponent;
-}
-
-        let logTinggi = pTinggi;
-        let logRendah = pRendah;
         let rowHtml = "";
 
-        // Hapus 'desa' dari perhitungan
-        const attrsCat = ['jenis_kelamin', 'merokok', 'konsumsi_alkohol', 'kurang_buah_sayur', 'diabetes', 'riwayat_hipertensi'];
-        attrsCat.forEach(attr => {
-            const val = dataUji[attr];
-            const pxT = countKategorik(attr, val, 'Tinggi');
-            const pxR = countKategorik(attr, val, 'Rendah');
-
-logTinggi *= (pxT || 1e-10);
-logRendah *= (pxR || 1e-10);
-
-            //logTinggi += Math.log(pxT);
-            //logRendah += Math.log(pxR);
-
-            // Format tampilan nilai (Value) untuk log
-            let displayVal = val;
-            if (attr === 'jenis_kelamin') {
-                displayVal = val === 'laki-laki' ? 'Laki-laki' : 'Perempuan';
-            }
-
-            rowHtml += `<tr><td class="text-muted small text-capitalize py-2">${attr.replace(/_/g, ' ')} <span class="badge bg-light text-dark border ms-1">${displayVal}</span></td><td class="text-danger small fw-bold">${pxT.toFixed(3)}</td><td class="text-success small fw-bold">${pxR.toFixed(3)}</td></tr>`;
+        // Render Categorical
+        catStep.items.forEach(item => {
+            rowHtml += `<tr>
+                <td class="text-muted small text-capitalize py-2">${item.attr} <span class="badge bg-light text-dark border ms-1">${item.val}</span></td>
+                <td class="text-danger small fw-bold">${item.tinggi.p.toFixed(3)}</td>
+                <td class="text-success small fw-bold">${item.rendah.p.toFixed(3)}</td>
+            </tr>`;
         });
 
-        const attrsNum = ['umur', 'tekanan_sistolik', 'tekanan_diastolik', 'imt'];
-        attrsNum.forEach(attr => {
-            const val = parseFloat(dataUji[attr]);
-            const sT = getMeanVar(attr, 'Tinggi');
-            const sR = getMeanVar(attr, 'Rendah');
-            const pxT = gaussianLikelihood(val, sT.mean, sT.variance);
-            const pxR = gaussianLikelihood(val, sR.mean, sR.variance);
-
-logTinggi *= (pxT || 1e-10);
-logRendah *= (pxR || 1e-10);
-
-            //logTinggi += Math.log(pxT + 1e-9); // 1e-9 untuk mencegah log(0)
-            //logRendah += Math.log(pxR + 1e-9);
-
-            rowHtml += `<tr><td class="text-muted small text-capitalize py-2">${attr.replace(/_/g, ' ')} <span class="badge bg-light text-dark border ms-1">${val}</span></td><td class="text-danger small fw-bold">${pxT.toFixed(6)}</td><td class="text-success small fw-bold">${pxR.toFixed(6)}</td></tr>`;
+        // Render Numerical
+        numStep.items.forEach(item => {
+            const displayT = item.tinggi.p < 0.0001 ? item.tinggi.p.toExponential(6).replace('e', 'E') : item.tinggi.p.toFixed(8);
+            const displayR = item.rendah.p < 0.0001 ? item.rendah.p.toExponential(6).replace('e', 'E') : item.rendah.p.toFixed(8);
+            rowHtml += `<tr>
+                <td class="text-muted small text-capitalize py-2">${item.attr} <span class="badge bg-light text-dark border ms-1">${item.val}</span></td>
+                <td class="text-danger small fw-bold">${displayT}</td>
+                <td class="text-success small fw-bold">${displayR}</td>
+            </tr>`;
         });
 
-        appendLog(`<div class="table-responsive bg-light rounded-3 border mb-3">
+        appendLog(`<div class="table-responsive bg-light rounded-3 border mb-3 animate-slide-up">
             <table class="table table-borderless table-hover table-sm mb-0">
                 <thead class="border-bottom small text-secondary"><tr><th class="ps-3 text-start">Atribut / Fitur <span class="fw-normal">(Data Pasien)</span></th><th>P(Fitur | Tinggi)</th><th class="pe-3">P(Fitur | Rendah)</th></tr></thead>
                 <tbody class="align-middle">${rowHtml}</tbody>
             </table>
         </div>`);
-        await sleep(1000);
+        await sleep(800);
 
-        // --- FASE 4: MAP (Maximum A Posteriori) dengan Logaritma ---
+        // --- FASE 4: MAP (Maximum A Posteriori) ---
+        // Menghitung kembali probabilitas gabungan unnormalized sperti Excel P(X, C) = P(C) * P(X1|C) * ...
+        // Nilai ini dihitung langsung dari logaritma agar presisi
+        const rawTinggi = Math.exp(apiResult.log_tinggi);
+        const rawRendah = Math.exp(apiResult.log_rendah);
+
         appendLog(`
-            <div class="p-3 bg-primary alert-info white bg-opacity-10 rounded-3 border border-primary border-opacity-25">
-                <h6 class="fw-bold text-primary mb-3"><i class="fas fa-balance-scale me-2"></i>Tahap 4: Akumulasi Skor Posterior (Logarithmic)</h6>
+            <div class="p-3 bg-primary alert-info white bg-opacity-10 rounded-3 border border-primary border-opacity-25 animate-slide-up">
+                <h6 class="fw-bold text-primary mb-3"><i class="fas fa-balance-scale me-2"></i>Tahap 4: Akumulasi Probabilitas Akhir (Joint Probability P(C, X))</h6>
                 <div class="d-flex justify-content-between mb-2 pb-2 border-bottom border-primary border-opacity-10">
-                    <span class="text-danger fw-bold small">Log-Skor Risiko TINGGI</span>
-                    <span class="text-danger font-monospace fw-bold">${logTinggi.toExponential(5).replace('e', 'E')}</span>
+                    <span class="text-danger fw-bold small">P(Risiko Tinggi, X)</span>
+                    <span class="text-danger font-monospace fw-bold">${rawTinggi.toExponential(5).replace('e', 'E')}</span>
                 </div>
                 <div class="d-flex justify-content-between">
-                    <span class="text-success fw-bold small">Log-Skor Risiko RENDAH</span>
-                    <span class="text-success font-monospace fw-bold">${logRendah.toExponential(5).replace('e', 'E')}</span>
+                    <span class="text-success fw-bold small">P(Risiko Rendah, X)</span>
+                    <span class="text-success font-monospace fw-bold">${rawRendah.toExponential(5).replace('e', 'E')}</span>
                 </div>
-                <div class="mt-2 text-center small text-muted"><i class="fas fa-info-circle me-1"></i>Nilai Log tertinggi menentukan klasifikasi akhir.</div>
+                <div class="mt-2 text-center small text-muted"><i class="fas fa-info-circle me-1"></i>Skor probabilitas gabungan di atas dihitung 100% selaras dengan rumus perkalian Excel.</div>
             </div>`);
-        await sleep(1000);
+        await sleep(800);
 
         // Reset classes
         if (cardDiagnosa) cardDiagnosa.classList.remove('border-danger', 'border-success', 'shadow-danger', 'shadow-success');
         panelDiagnosa.classList.remove('bg-danger', 'bg-success', 'bg-opacity-10', 'bounce-in-animation');
         void panelDiagnosa.offsetWidth; // Trigger reflow
 
-        // Komparasi menggunakan nilai Log (Lebih stabil dari eksponensial)
-        if (logTinggi > logRendah) {
-            finalPrediction = 'Tinggi';
+        finalPrediction = apiResult.prediction;
+        
+        if (finalPrediction === 'Tinggi') {
             cardDiagnosa.classList.add('border-danger');
             panelDiagnosa.classList.add('bg-danger', 'bg-opacity-10', 'bounce-in-animation');
             hasilAkhirTeks.innerHTML = `<span class="text-danger"><i class="fas fa-exclamation-triangle me-2"></i>RISIKO TINGGI</span>`;
-            hasilAkhirTeks.nextElementSibling.innerText = "Diagnosis Sistem: Probabilitas lebih mengarah pada kategori penderita Hipertensi.";
+            hasilAkhirTeks.nextElementSibling.innerText = `Diagnosis Sistem (${apiResult.confidence_tinggi}%): Probabilitas lebih mengarah pada kategori penderita Hipertensi.`;
         } else {
             finalPrediction = 'Rendah';
             cardDiagnosa.classList.add('border-success');
             panelDiagnosa.classList.add('bg-success', 'bg-opacity-10', 'bounce-in-animation');
             hasilAkhirTeks.innerHTML = `<span class="text-success"><i class="fas fa-check-circle me-2"></i>RISIKO RENDAH</span>`;
-            hasilAkhirTeks.nextElementSibling.innerText = "Diagnosis Sistem: Pasien masuk dalam kategori aman (Risiko Rendah Hipertensi).";
+            hasilAkhirTeks.nextElementSibling.innerText = `Diagnosis Sistem (${apiResult.confidence_rendah}%): Pasien masuk dalam kategori aman (Risiko Rendah Hipertensi).`;
         }
 
         setTimeout(() => {

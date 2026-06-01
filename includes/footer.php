@@ -23,6 +23,6 @@
     <!-- Custom Scripts -->
     <script src="../assets/js/script.js"></script>
     <!-- Naive Bayes Logic -->
-    <script src="../assets/js/naive_bayes.js"></script>
+    <script src="../assets/js/naive_bayes.js?v=<?= time() ?>"></script>
 </body>
 </html>

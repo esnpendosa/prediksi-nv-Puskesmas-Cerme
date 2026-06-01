@@ -223,16 +223,16 @@ document.addEventListener('DOMContentLoaded', function () {
 
         appendLog(`
             <div class="p-3 bg-primary alert-info white bg-opacity-10 rounded-3 border border-primary border-opacity-25 animate-slide-up">
-                <h6 class="fw-bold text-primary mb-3"><i class="fas fa-balance-scale me-2"></i>Tahap 4: Akumulasi Probabilitas Akhir (Joint Probability P(C, X))</h6>
+                <h6 class="fw-bold text-primary mb-3"><i class="fas fa-balance-scale me-2"></i>Tahap 4: Akumulasi Skor Posterior (Logarithmic)</h6>
                 <div class="d-flex justify-content-between mb-2 pb-2 border-bottom border-primary border-opacity-10">
-                    <span class="text-danger fw-bold small">P(Risiko Tinggi, X)</span>
+                    <span class="text-danger fw-bold small">Log-Skor Risiko TINGGI</span>
                     <span class="text-danger font-monospace fw-bold">${rawTinggi.toExponential(5).replace('e', 'E')}</span>
                 </div>
                 <div class="d-flex justify-content-between">
-                    <span class="text-success fw-bold small">P(Risiko Rendah, X)</span>
+                    <span class="text-success fw-bold small">Log-Skor Risiko RENDAH</span>
                     <span class="text-success font-monospace fw-bold">${rawRendah.toExponential(5).replace('e', 'E')}</span>
                 </div>
-                <div class="mt-2 text-center small text-muted"><i class="fas fa-info-circle me-1"></i>Skor probabilitas gabungan di atas dihitung 100% selaras dengan rumus perkalian Excel.</div>
+                <div class="mt-2 text-center small text-muted"><i class="fas fa-info-circle me-1"></i>Nilai Log tertinggi menentukan klasifikasi akhir.</div>
             </div>`);
         await sleep(800);
 
